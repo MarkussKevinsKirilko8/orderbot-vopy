@@ -29,29 +29,26 @@
     #status {
       font-size: 22px;
       font-weight: 500;
-      margin-bottom: 16px;
-    }
-    #subtext {
-      font-size: 14px;
-      color: var(--tg-theme-hint-color, #999);
+      margin-bottom: 28px;
     }
     button {
-      margin-top: 24px;
-      padding: 14px 28px;
-      font-size: 16px;
+      padding: 14px 36px;
+      font-size: 17px;
       font-weight: 500;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       background: var(--tg-theme-button-color, #2481cc);
       color: var(--tg-theme-button-text-color, #fff);
       cursor: pointer;
+      transition: opacity 0.15s;
     }
+    button:active { opacity: 0.7; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 <body>
-  <div id="status">Копирую…</div>
-  <div id="subtext"></div>
-  <button id="manualBtn" hidden>Скопировать вручную</button>
+  <div id="status">Шифр готов</div>
+  <button id="copyBtn">Копировать</button>
 
   <script>
     (function () {
@@ -59,13 +56,24 @@
       if (tg) { tg.ready(); tg.expand(); }
 
       const status = document.getElementById('status');
-      const subtext = document.getElementById('subtext');
-      const manualBtn = document.getElementById('manualBtn');
+      const copyBtn = document.getElementById('copyBtn');
 
-      const blob = decodeURIComponent((window.location.hash || '').slice(1));
+      // window.location.hash holds our blob, but Telegram appends its own
+      // session params (?tgWebAppData=..., etc.) after the fragment in some
+      // clients. Strip everything from the first '?' onward to recover the
+      // pure encrypted blob.
+      const rawHash = (window.location.hash || '').slice(1);
+      const blobOnly = rawHash.split('?')[0];
+      let blob = '';
+      try {
+        blob = decodeURIComponent(blobOnly);
+      } catch (e) {
+        blob = blobOnly;
+      }
 
       if (!blob) {
-        status.textContent = '⚠️ Нет данных для копирования';
+        status.textContent = '⚠️ Нет данных';
+        copyBtn.disabled = true;
         return;
       }
 
@@ -86,37 +94,29 @@
         return ok;
       }
 
-      async function attemptCopy() {
+      async function doCopy() {
+        let ok = false;
         if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
           try {
             await navigator.clipboard.writeText(blob);
-            return true;
-          } catch (e) { /* fall through */ }
+            ok = true;
+          } catch (e) { /* fall through to legacy */ }
         }
-        return legacyCopy(blob);
-      }
+        if (!ok) ok = legacyCopy(blob);
 
-      async function doCopyAndClose() {
-        const ok = await attemptCopy();
         if (ok) {
           status.textContent = '✅ Скопировано';
-          subtext.textContent = 'Закрываю…';
+          copyBtn.style.display = 'none';
           if (tg && tg.HapticFeedback) {
             try { tg.HapticFeedback.notificationOccurred('success'); } catch (e) {}
           }
           setTimeout(() => { if (tg) tg.close(); }, 500);
         } else {
-          status.textContent = '⚠️ Нужно нажать кнопку';
-          subtext.textContent = 'Браузер не разрешает автокопирование';
-          manualBtn.hidden = false;
+          status.textContent = '⚠️ Не удалось скопировать';
         }
       }
 
-      manualBtn.addEventListener('click', doCopyAndClose);
-
-      // Try once automatically — most Telegram clients allow it because the
-      // Mini App was launched in response to the user's button tap.
-      doCopyAndClose();
+      copyBtn.addEventListener('click', doCopy);
     })();
   </script>
 </body>
