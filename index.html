@@ -80,21 +80,33 @@
         let frag = (window.location.hash || '').slice(1);
         if (!frag) return { enc: '', plain: '' };
 
+        // Strip Telegram-appended session params (?tgWebAppData=...,
+        // &user=..., &tgWebAppVersion=..., etc.) before parsing.
         const tgIdx = frag.search(/[?&]tgWebApp[A-Za-z]+=/);
         if (tgIdx >= 0) frag = frag.slice(0, tgIdx);
 
-        if (frag.indexOf('enc=') !== -1 || frag.indexOf('plain=') !== -1) {
-          const params = new URLSearchParams(frag);
-          return {
-            enc: params.get('enc') || '',
-            plain: params.get('plain') || '',
-          };
+        // IMPORTANT: do NOT use URLSearchParams here — it follows the
+        // x-www-form-urlencoded rule that '+' means space, but our
+        // encrypted base64 blob legitimately contains '+'. URLSearchParams
+        // would corrupt the clipboard contents into spaces.
+        // decodeURIComponent leaves '+' alone, which is what we want.
+        function dec(s) {
+          try { return decodeURIComponent(s); } catch (e) { return s; }
         }
 
-        // Old single-blob format
-        let bare = frag;
-        try { bare = decodeURIComponent(frag); } catch (e) {}
-        return { enc: bare, plain: '' };
+        if (frag.startsWith('enc=')) {
+          const plainSep = frag.indexOf('&plain=');
+          if (plainSep >= 0) {
+            return {
+              enc:   dec(frag.slice('enc='.length, plainSep)),
+              plain: dec(frag.slice(plainSep + '&plain='.length)),
+            };
+          }
+          return { enc: dec(frag.slice('enc='.length)), plain: '' };
+        }
+
+        // Old single-blob format (cached Mini App URLs at v=3 etc.)
+        return { enc: dec(frag), plain: '' };
       }
 
       const { enc: blob, plain: cleanJson } = readFragment();
