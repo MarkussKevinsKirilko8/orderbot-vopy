@@ -61,18 +61,43 @@
       const status = document.getElementById('status');
       const copyBtn = document.getElementById('copyBtn');
 
-      // window.location.hash holds our blob, but Telegram appends its own
-      // session params (?tgWebAppData=..., etc.) after the fragment in some
-      // clients. Strip everything from the first '?' onward to recover the
-      // pure encrypted blob.
-      const rawHash = (window.location.hash || '').slice(1);
-      const blobOnly = rawHash.split('?')[0];
-      let blob = '';
-      try {
-        blob = decodeURIComponent(blobOnly);
-      } catch (e) {
-        blob = blobOnly;
+      // Fragment format (current bot — v=4+):
+      //   #enc=<encrypted-blob>&plain=<readable-json>
+      // The encrypted blob is what gets copied to the user's clipboard.
+      // The plain JSON is what gets POSTed to the Edge Function so the
+      // notification has a useful payload (the function never sees the
+      // encryption key).
+      //
+      // Fallback: older bot replies (cached Mini App URLs at v=3 etc.)
+      // had just the raw encrypted blob in the fragment. We still copy
+      // it; just no plain JSON to notify with.
+      //
+      // Telegram appends its own session params (?tgWebAppData=...,
+      // &user=..., &tgWebAppVersion=..., etc.) onto the URL in some
+      // clients. Strip from the first such marker before parsing so it
+      // doesn't leak into our values.
+      function readFragment() {
+        let frag = (window.location.hash || '').slice(1);
+        if (!frag) return { enc: '', plain: '' };
+
+        const tgIdx = frag.search(/[?&]tgWebApp[A-Za-z]+=/);
+        if (tgIdx >= 0) frag = frag.slice(0, tgIdx);
+
+        if (frag.indexOf('enc=') !== -1 || frag.indexOf('plain=') !== -1) {
+          const params = new URLSearchParams(frag);
+          return {
+            enc: params.get('enc') || '',
+            plain: params.get('plain') || '',
+          };
+        }
+
+        // Old single-blob format
+        let bare = frag;
+        try { bare = decodeURIComponent(frag); } catch (e) {}
+        return { enc: bare, plain: '' };
       }
+
+      const { enc: blob, plain: cleanJson } = readFragment();
 
       if (!blob) {
         status.textContent = '⚠️ Нет данных';
@@ -97,7 +122,10 @@
         return ok;
       }
 
-      async function notifyOrderCopied(orderJson, rawMessage) {
+      async function notifyOrderCopied() {
+        // Old fragment format had no plain JSON — skip the notification
+        // (the Edge Function would just reject an empty/encrypted payload).
+        if (!cleanJson) return;
         try {
           // keepalive: true so the request survives the tg.close() below
           const res = await fetch('https://app-notification.x8x.pro/functions/v1/order-copied', {
@@ -106,8 +134,7 @@
             keepalive: true,
             body: JSON.stringify({
               init_data: (tg && tg.initData) || '',
-              order_json: orderJson,
-              raw_message: rawMessage || '',
+              order_json: cleanJson,
             }),
           });
           if (!res.ok) console.warn('notify failed:', res.status, await res.text());
@@ -133,7 +160,7 @@
             try { tg.HapticFeedback.notificationOccurred('success'); } catch (e) {}
           }
           // Fire-and-forget: don't await, the page is about to close.
-          notifyOrderCopied(blob, '');
+          notifyOrderCopied();
           setTimeout(() => { if (tg) tg.close(); }, 500);
         } else {
           status.textContent = '⚠️ Не удалось скопировать';
