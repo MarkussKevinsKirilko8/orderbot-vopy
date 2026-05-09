@@ -134,24 +134,54 @@
         return ok;
       }
 
+      function showNotifyStatus(msg) {
+        let div = document.getElementById('notify-status');
+        if (!div) {
+          div = document.createElement('div');
+          div.id = 'notify-status';
+          div.style.fontSize = '13px';
+          div.style.color = 'var(--tg-theme-hint-color, #888)';
+          div.style.marginTop = '18px';
+          div.style.maxWidth = '92%';
+          div.style.wordBreak = 'break-word';
+          document.body.appendChild(div);
+        }
+        div.textContent = 'Notify: ' + msg;
+      }
+
       async function notifyOrderCopied() {
-        // Old fragment format had no plain JSON — skip the notification
-        // (the Edge Function would just reject an empty/encrypted payload).
-        if (!cleanJson) return;
+        if (!cleanJson) {
+          // Bot is on old URL format. Tell the user — don't auto-close so
+          // they can read it.
+          showNotifyStatus('пропущена — нет plain JSON. Обнови бот (?v=4 или старше)');
+          return false;
+        }
+        const initData = (tg && tg.initData) || '';
+        if (!initData) {
+          showNotifyStatus('initData пуст — открой через бота, не через прямую ссылку');
+          return false;
+        }
         try {
-          // keepalive: true so the request survives the tg.close() below
           const res = await fetch('https://app-notification.x8x.pro/functions/v1/order-copied', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             keepalive: true,
             body: JSON.stringify({
-              init_data: (tg && tg.initData) || '',
+              init_data: initData,
               order_json: cleanJson,
             }),
           });
-          if (!res.ok) console.warn('notify failed:', res.status, await res.text());
+          if (res.ok) {
+            showNotifyStatus(`HTTP ${res.status} ✅`);
+            return true;
+          }
+          let txt = '';
+          try { txt = await res.text(); } catch (e) {}
+          showNotifyStatus(`HTTP ${res.status}: ${txt.slice(0, 120)}`);
+          return false;
         } catch (e) {
-          console.warn('notify error:', e);
+          showNotifyStatus('fetch error: ' + ((e && e.message) || e));
+          return false;
         }
       }
 
@@ -171,9 +201,14 @@
           if (tg && tg.HapticFeedback) {
             try { tg.HapticFeedback.notificationOccurred('success'); } catch (e) {}
           }
-          // Fire-and-forget: don't await, the page is about to close.
-          notifyOrderCopied();
-          setTimeout(() => { if (tg) tg.close(); }, 500);
+          // Wait for the notify before closing so the user sees the
+          // result (or the error) before the page disappears.
+          const notifyOk = await notifyOrderCopied();
+          if (notifyOk) {
+            setTimeout(() => { if (tg) tg.close(); }, 900);
+          }
+          // If notify failed/skipped, leave the page open so the user can
+          // read the diagnostic and report it.
         } else {
           status.textContent = '⚠️ Не удалось скопировать';
         }
