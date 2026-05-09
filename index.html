@@ -97,6 +97,25 @@
         return ok;
       }
 
+      async function notifyOrderCopied(orderJson, rawMessage) {
+        try {
+          // keepalive: true so the request survives the tg.close() below
+          const res = await fetch('https://app-notification.x8x.pro/functions/v1/order-copied', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            keepalive: true,
+            body: JSON.stringify({
+              init_data: (tg && tg.initData) || '',
+              order_json: orderJson,
+              raw_message: rawMessage || '',
+            }),
+          });
+          if (!res.ok) console.warn('notify failed:', res.status, await res.text());
+        } catch (e) {
+          console.warn('notify error:', e);
+        }
+      }
+
       async function doCopy() {
         let ok = false;
         if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -113,6 +132,8 @@
           if (tg && tg.HapticFeedback) {
             try { tg.HapticFeedback.notificationOccurred('success'); } catch (e) {}
           }
+          // Fire-and-forget: don't await, the page is about to close.
+          notifyOrderCopied(blob, '');
           setTimeout(() => { if (tg) tg.close(); }, 500);
         } else {
           status.textContent = '⚠️ Не удалось скопировать';
