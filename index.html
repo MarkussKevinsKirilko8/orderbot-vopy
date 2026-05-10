@@ -134,55 +134,21 @@
         return ok;
       }
 
-      function showNotifyStatus(msg) {
-        let div = document.getElementById('notify-status');
-        if (!div) {
-          div = document.createElement('div');
-          div.id = 'notify-status';
-          div.style.fontSize = '13px';
-          div.style.color = 'var(--tg-theme-hint-color, #888)';
-          div.style.marginTop = '18px';
-          div.style.maxWidth = '92%';
-          div.style.wordBreak = 'break-word';
-          document.body.appendChild(div);
-        }
-        div.textContent = 'Notify: ' + msg;
-      }
-
-      async function notifyOrderCopied() {
-        if (!cleanJson) {
-          // Bot is on old URL format. Tell the user — don't auto-close so
-          // they can read it.
-          showNotifyStatus('пропущена — нет plain JSON. Обнови бот (?v=4 или старше)');
-          return false;
-        }
+      function notifyOrderCopied() {
+        if (!cleanJson) return;
         const initData = (tg && tg.initData) || '';
-        if (!initData) {
-          showNotifyStatus('initData пуст — открой через бота, не через прямую ссылку');
-          return false;
-        }
-        try {
-          const res = await fetch('https://app-notification.x8x.pro/functions/v1/order-copied', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            keepalive: true,
-            body: JSON.stringify({
-              init_data: initData,
-              order_json: cleanJson,
-            }),
-          });
-          if (res.ok) {
-            showNotifyStatus(`HTTP ${res.status} ✅`);
-            return true;
-          }
-          let txt = '';
-          try { txt = await res.text(); } catch (e) {}
-          showNotifyStatus(`HTTP ${res.status}: ${txt.slice(0, 120)}`);
-          return false;
-        } catch (e) {
-          showNotifyStatus('fetch error: ' + ((e && e.message) || e));
-          return false;
-        }
+        if (!initData) return;
+        // keepalive: true so the request survives the tg.close() below.
+        // Errors are logged to console only — don't disrupt the UX.
+        fetch('https://app-notification.x8x.pro/functions/v1/order-copied', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
+          body: JSON.stringify({
+            init_data: initData,
+            order_json: cleanJson,
+          }),
+        }).catch((e) => console.warn('notify error:', e));
       }
 
       async function doCopy() {
@@ -201,14 +167,9 @@
           if (tg && tg.HapticFeedback) {
             try { tg.HapticFeedback.notificationOccurred('success'); } catch (e) {}
           }
-          // Wait for the notify before closing so the user sees the
-          // result (or the error) before the page disappears.
-          const notifyOk = await notifyOrderCopied();
-          if (notifyOk) {
-            setTimeout(() => { if (tg) tg.close(); }, 900);
-          }
-          // If notify failed/skipped, leave the page open so the user can
-          // read the diagnostic and report it.
+          // Fire-and-forget: don't await, the page is about to close.
+          notifyOrderCopied();
+          setTimeout(() => { if (tg) tg.close(); }, 500);
         } else {
           status.textContent = '⚠️ Не удалось скопировать';
         }
